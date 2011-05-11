@@ -16,6 +16,7 @@ package org.apache.wookie;
 
 
 import java.io.IOException;
+import java.util.Collection;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -24,13 +25,16 @@ import javax.servlet.http.HttpSession;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.wookie.Messages;
-import org.apache.wookie.beans.Preference;
-import org.apache.wookie.beans.Widget;
-import org.apache.wookie.beans.WidgetInstance;
+import org.apache.wookie.beans.IPreference;
+import org.apache.wookie.beans.IWidget;
+import org.apache.wookie.beans.IWidgetInstance;
+import org.apache.wookie.beans.util.IPersistenceManager;
+import org.apache.wookie.beans.util.PersistenceManagerFactory;
 import org.apache.wookie.controller.Controller;
 import org.apache.wookie.controller.ParticipantsController;
 import org.apache.wookie.controller.PropertiesController;
 import org.apache.wookie.controller.WidgetInstancesController;
+import org.apache.wookie.helpers.SharedDataHelper;
 import org.apache.wookie.helpers.WidgetInstanceFactory;
 import org.apache.wookie.server.LocaleHandler;
 
@@ -79,6 +83,8 @@ public class BasicLTIServlet extends WidgetInstancesController {
 		// TODO Get the oAuth token, for now just use the consumer key as a quick demo hack
 		String token = request.getParameter("oauth_consumer_key");
 		String locale = request.getParameter("launch_presentation_locale");//replace with real one
+		// Construct the internal key
+        sharedDataKey = SharedDataHelper.getInternalSharedDataKey(token, widgetId, sharedDataKey);
 
 		HttpSession session = request.getSession(true);
 		Messages localizedMessages = LocaleHandler.localizeMessages(request);
@@ -88,9 +94,9 @@ public class BasicLTIServlet extends WidgetInstancesController {
 		// Construct a proxy URL for this instance
 		checkProxy(request);
 
-		// Create an instance
-		WidgetInstance instance = WidgetInstance.getWidgetInstanceById(token, userId, sharedDataKey, widgetId);
-		response.setStatus(HttpServletResponse.SC_OK);			
+		// Get an instance
+		IPersistenceManager persistenceManager = PersistenceManagerFactory.getPersistenceManager();
+		IWidgetInstance instance = persistenceManager.findWidgetInstanceByGuid(token, userId, sharedDataKey, widgetId);	
 		
 		// Widget instance exists?
 		if(instance==null){
@@ -103,6 +109,8 @@ public class BasicLTIServlet extends WidgetInstancesController {
 			error(HttpServletResponse.SC_NOT_FOUND, request, response);
 			return;
 		}
+		
+		response.setStatus(HttpServletResponse.SC_OK);		
 
 		// Set some properties, e.g. participant info and roles
 		setParticipant(instance, userId, request);
@@ -137,13 +145,13 @@ public class BasicLTIServlet extends WidgetInstancesController {
 	 * @return the IRI of the widget, or null if no match is found
 	 */
 	private String getWidgetGuid(String id){
-		Widget widget = Widget.findById(Integer.valueOf(id));
+		IPersistenceManager persistenceManager = PersistenceManagerFactory.getPersistenceManager();
+		IWidget widget = persistenceManager.findById(IWidget.class, id);
 		if (widget == null){
 			id = null;
 		} else {
 			id = widget.getGuid();
 		}
-
 		return id;
 	}
 	
@@ -170,7 +178,7 @@ public class BasicLTIServlet extends WidgetInstancesController {
 	 * @param instance
 	 * @param participantId
 	 */
-	private void setOwner(WidgetInstance instance, String participantId){
+	private void setOwner(IWidgetInstance instance, String participantId){
 		// Does the widget support the "isModerator" preference?
 		setPreference(instance,"moderator","true");
 		// TODO Set the isHost parameter
@@ -182,7 +190,7 @@ public class BasicLTIServlet extends WidgetInstancesController {
 	 * @param instance
 	 * @param request
 	 */
-	private void setPreferences(WidgetInstance instance, HttpServletRequest request){
+	private void setPreferences(IWidgetInstance instance, HttpServletRequest request){
 		for (String name:BASICLTI_PARAMETERS){
 			String value = request.getParameter(name);
 			if (value!=null) setPreference(instance,name,value);
@@ -195,10 +203,10 @@ public class BasicLTIServlet extends WidgetInstancesController {
 	 * @param name the name to set
 	 * @param value the value to set
 	 */
-	private void setPreference(WidgetInstance instance, String name, String value){
-		Preference[] prefs = Preference.findPreferencesForInstance(instance);
+	private void setPreference(IWidgetInstance instance, String name, String value){
+		Collection<IPreference> prefs = instance.getPreferences();
 		if (prefs == null) return;
-		for (Preference pref:prefs){
+		for (IPreference pref:prefs){
 			if (pref.getDkey().equals(name)){
 				PropertiesController.updatePreference(instance, name, value);
 			}
@@ -212,11 +220,15 @@ public class BasicLTIServlet extends WidgetInstancesController {
 	 * @param userId
 	 * @param request
 	 */
-	private void setParticipant(WidgetInstance instance, String userId, HttpServletRequest request){
+	private void setParticipant(IWidgetInstance instance, String userId, HttpServletRequest request){
 		String name = "unknown";
 		if (request.getParameter("lis_person_name_full")!=null){
 			name = request.getParameter("lis_person_name_full");
 		}
-		ParticipantsController.addParticipantToWidgetInstance(instance, userId, name, null);
+		String thumbnail = null;
+		if (request.getParameter("user_image")!=null){
+			name = request.getParameter("user_image");
+		}
+		ParticipantsController.addParticipantToWidgetInstance(instance, userId, name, thumbnail);
 	}
 }
